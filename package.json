@@ -1,0 +1,7 @@
+{
+  "name": "wasabi-proxy",
+  "version": "1.0.0",
+  "dependencies": {
+    "aws4fetch": "^1.0.17"
+  }
+}
