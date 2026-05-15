@@ -1,5 +1,4 @@
-import { AwsClient } from 'https://esm.sh/aws4fetch@1.0.17';
-
+import { AwsClient } from 'aws4fetch';
 export async function onRequest(context) {
   const requestUrl = new URL(context.request.url);
   const fileName = requestUrl.searchParams.get("file");
