@@ -4,6 +4,23 @@ export async function onRequest(context) {
   const requestUrl = new URL(context.request.url);
   const fileName = requestUrl.searchParams.get("file");
 
+  if (!fileName) {
+    return new Response("Missing 'file' parameter", { status: 400 });
+  }
+
+  // CORS preflight ကို ဖြေရှင်းပေးမယ်
+  if (context.request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }
+
   const aws = new AwsClient({
     accessKeyId: context.env.WASABI_ACCESS_KEY,
     secretAccessKey: context.env.WASABI_SECRET_KEY,
@@ -11,30 +28,64 @@ export async function onRequest(context) {
     region: 'ap-southeast-1'
   });
 
-  const wasabiUrl = `https://s3.ap-southeast-1.wasabisys.com/lugyi/${fileName}`;
+  const wasabiUrl = `https://s3.ap-southeast-1.wasabisys.com/lugyi/${encodeURIComponent(fileName)}`;
 
-  // ၁။ Wasabi ဆီကနေ အချိန်ပိုင်း Link (Pre-signed URL) ထုတ်မယ်
+  // ၁။ Presigned URL ထုတ်မယ် (၁ နာရီ သက်တမ်း)
   const signedRequest = await aws.sign(wasabiUrl, {
     method: 'GET',
-    awsService: 's3',
-    signQuery: true,
-    expiresIn: 3600
+    aws: { signQuery: true },
   });
 
-  // ၂။ APK က ပို့လိုက်တဲ့ Headers (Range: bytes=...) ကို Wasabi ဆီ ပို့ပေးရမယ်
-  // ဒါမှသာ သူက ရစ်ကြည့်တဲ့ အပိုင်းကို သီးသန့်ပေးမှာပါ
+  // ၂။ Client ရဲ့ Range header ကိုပဲ ရွေးပြီး Wasabi ဆီ ပို့မယ်
+  //    (Headers အကုန်လုံး forward မလုပ်ဖူး – ဒါက ပြဿနာ၏ အရင်းအမြစ်)
+  const forwardHeaders = new Headers();
+  const rangeHeader = context.request.headers.get("Range");
+  if (rangeHeader) {
+    forwardHeaders.set("Range", rangeHeader);
+  }
+  const ifRange = context.request.headers.get("If-Range");
+  if (ifRange) {
+    forwardHeaders.set("If-Range", ifRange);
+  }
+
+  // ၃။ Wasabi ဆီ fetch လုပ်မယ်
   const response = await fetch(signedRequest.url, {
-    method: context.request.method,
-    headers: context.request.headers // ဒီနေရာမှာ Range header ပါသွားပြီ
+    method: context.request.method, // GET ဒါမှမဟုတ် HEAD
+    headers: forwardHeaders,
   });
 
-  // ၃။ Headers အကုန် ပြန် Copy ကူးပေးမယ်
-  const newHeaders = new Headers(response.headers);
+  // ၄။ လိုအပ်တဲ့ Headers တွေပဲ ပြန် Copy လုပ်မယ်
+  const newHeaders = new Headers();
+
+  const passthrough = [
+    "content-type",
+    "content-length",
+    "content-range",
+    "accept-ranges",
+    "etag",
+    "last-modified",
+    "cache-control",
+  ];
+
+  for (const key of passthrough) {
+    const value = response.headers.get(key);
+    if (value) newHeaders.set(key, value);
+  }
+
+  // Range request ကို browser က သိအောင် Accept-Ranges အမြဲထည့်ပေးမယ်
+  if (!newHeaders.has("accept-ranges")) {
+    newHeaders.set("Accept-Ranges", "bytes");
+  }
+
+  // CORS
   newHeaders.set("Access-Control-Allow-Origin", "*");
-  
-  // အရေးကြီး: Range request ဖြစ်ရင် Status က 206 ဖြစ်ရမယ်
+  newHeaders.set("Access-Control-Expose-Headers",
+    "Content-Length, Content-Range, Accept-Ranges, Content-Type");
+
+  // Status code က Wasabi ပြန်ပေးတဲ့အတိုင်း (200 ဒါမှမဟုတ် 206) ထားရမယ်
   return new Response(response.body, {
     status: response.status,
-    headers: newHeaders
+    statusText: response.statusText,
+    headers: newHeaders,
   });
 }
