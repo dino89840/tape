@@ -1,43 +1,96 @@
 import { AwsClient } from 'aws4fetch';
 
+const CONFIG = {
+  region: 'ap-northeast-2',
+  bucket: 'osaa',
+  endpoint: 's3.ap-northeast-2.wasabisys.com',
+  signedUrlExpiry: 604800, // 7 days
+};
+
+// Path traversal တားဆီးရန် filename sanitize
+function sanitizeFileName(name) {
+  if (!name || typeof name !== 'string') return null;
+  if (name.includes('..') || name.includes('\\') || name.startsWith('/')) return null;
+  if (name.length > 500) return null;
+  return name;
+}
+
 export async function onRequest(context) {
-  const requestUrl = new URL(context.request.url);
-  const fileName = requestUrl.searchParams.get("file");
+  try {
+    const { request, env } = context;
+    const requestUrl = new URL(request.url);
+    const rawFileName = requestUrl.searchParams.get('file');
 
-  const aws = new AwsClient({
-    accessKeyId: context.env.WASABI_ACCESS_KEY,
-    secretAccessKey: context.env.WASABI_SECRET_KEY,
-    service: 's3',
-    region: 'ap-northeast-2'
-  });
+    // ၁။ Input validation
+    const fileName = sanitizeFileName(rawFileName);
+    if (!fileName) {
+      return new Response('Invalid or missing file parameter', { status: 400 });
+    }
 
-  const wasabiUrl = `https://s3.ap-northeast-2.wasabisys.com/osaa/${fileName}`;
+    // ၂။ Environment variables စစ်ဆေးခြင်း
+    if (!env.WASABI_ACCESS_KEY || !env.WASABI_SECRET_KEY) {
+      console.error('Wasabi credentials မထည့်ထားပါ');
+      return new Response('Server configuration error', { status: 500 });
+    }
 
-  // ၁။ Wasabi ဆီကနေ ဖိုင်ရဲ့ Header (Size နဲ့ Type) ကို အရင်ယူမယ်
-  const headResponse = await aws.fetch(wasabiUrl, { method: 'HEAD' });
-  const fileSize = headResponse.headers.get('content-length');
-
-  // ၂။ အကယ်၍ APK က File Size စစ်ဖို့ (HEAD request) ပို့လာရင်
-  if (context.request.method === 'HEAD') {
-    return new Response(null, {
-      headers: {
-        'Content-Length': fileSize,
-        'Content-Type': 'video/mp4',
-        'Accept-Ranges': 'bytes'
-      }
+    // ၃။ AWS client ဖန်တီးခြင်း
+    const aws = new AwsClient({
+      accessKeyId: env.WASABI_ACCESS_KEY,
+      secretAccessKey: env.WASABI_SECRET_KEY,
+      service: 's3',
+      region: CONFIG.region,
     });
+
+    // ၄။ Filename ကို URL encode (slash တွေတော့ ထားခဲ့)
+    const encodedFileName = encodeURIComponent(fileName).replace(/%2F/g, '/');
+    const wasabiUrl = `https://${CONFIG.endpoint}/${CONFIG.bucket}/${encodedFileName}`;
+
+    // ၅။ HEAD request → file size/metadata ပြန်ပေး (Proxy mode)
+    if (request.method === 'HEAD') {
+      const headResponse = await aws.fetch(wasabiUrl, { method: 'HEAD' });
+
+      if (!headResponse.ok) {
+        return new Response(null, {
+          status: headResponse.status === 404 ? 404 : 502,
+        });
+      }
+
+      const responseHeaders = new Headers();
+      // Wasabi ဆီက ပြန်လာတဲ့ headers တွေကို forward
+      const forwardHeaders = ['content-length', 'content-type', 'etag', 'last-modified'];
+      for (const h of forwardHeaders) {
+        const v = headResponse.headers.get(h);
+        if (v) responseHeaders.set(h, v);
+      }
+      responseHeaders.set('Accept-Ranges', 'bytes');
+      responseHeaders.set('Cache-Control', 'public, max-age=3600');
+
+      return new Response(null, {
+        status: 200,
+        headers: responseHeaders,
+      });
+    }
+
+    // ၆။ GET request → Signed URL ထုတ်ပြီး redirect (Stream/Download mode)
+    if (request.method === 'GET') {
+      const signedRequest = await aws.sign(wasabiUrl, {
+        method: 'GET',
+        aws: { signQuery: true },
+        headers: {
+          'X-Amz-Expires': CONFIG.signedUrlExpiry.toString(),
+        },
+      });
+
+      return Response.redirect(signedRequest.url, 302);
+    }
+
+    // ၇။ တခြား method တွေ မလက်ခံ
+    return new Response('Method not allowed', {
+      status: 405,
+      headers: { Allow: 'GET, HEAD' },
+    });
+  } catch (error) {
+    console.error('Proxy error:', error);
+    return new Response('Internal Server Error', { status: 500 });
   }
-
-  // ၃။ တကယ်ဒေါင်းဖို့အတွက် Redirect လုပ်မယ့်အစား 
-  // APK က Download Manager နဲ့သုံးလို့ရအောင် Link အသစ်ကို ချက်ချင်းပို့ပေးလိုက်မယ်
-  const signedRequest = await aws.sign(wasabiUrl, {
-    method: 'GET',
-    awsService: 's3',
-    signQuery: true,
-    expiresIn: 604800
-  });
-
-  // အရေးကြီးချက် - APK က Size မြင်ဖို့အတွက် Proxy လုပ်ပေးရမယ်
-  // Redirect မလုပ်ဘဲ Header တွေနဲ့တကွ ပြန်ပို့ပေးလိုက်မယ်
-  return Response.redirect(signedRequest.url, 302);
 }
