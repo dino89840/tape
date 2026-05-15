@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>File Viewer</title>
+</head>
+<body>
+
+  <h2>File Upload & View</h2>
+
+  <!-- Upload Form -->
+  <input type="file" id="fileInput" accept="image/*,video/*,.zip">
+  <button onclick="uploadFile()">Upload</button>
+  <div id="uploadStatus"></div>
+
+  <hr>
+
+  <!-- View File -->
+  <input type="text" id="filenameInput" placeholder="filename.jpg">
+  <button onclick="viewFile()">View</button>
+  
+  <div id="preview"></div>
+
+  <script>
+    // Proxy URL သုံးပြီး ဖိုင်ကြည့်
+    function viewFile() {
+      const filename = document.getElementById('filenameInput').value;
+      const proxyUrl = `/file/${filename}`;
+      const preview = document.getElementById('preview');
+      
+      const ext = filename.split('.').pop().toLowerCase();
+      
+      if (['jpg','jpeg','png','gif','webp'].includes(ext)) {
+        preview.innerHTML = `<img src="${proxyUrl}" style="max-width:500px">`;
+      } else if (['mp4','webm','mov'].includes(ext)) {
+        preview.innerHTML = `
+          <video controls style="max-width:500px">
+            <source src="${proxyUrl}">
+          </video>`;
+      } else {
+        preview.innerHTML = `<a href="${proxyUrl}" download="${filename}">Download ${filename}</a>`;
+      }
+    }
+
+    // Upload function (backend API လိုတယ် - Step 4 ကြည့်)
+    async function uploadFile() {
+      const file = document.getElementById('fileInput').files[0];
+      if (!file) return alert('File ရွေးပါ');
+      
+      const status = document.getElementById('uploadStatus');
+      status.textContent = 'Uploading...';
+      
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+      
+      const data = await res.json();
+      if (data.success) {
+        status.textContent = `✅ Uploaded: ${data.filename}`;
+      } else {
+        status.textContent = `❌ Error: ${data.error}`;
+      }
+    }
+  </script>
+
+</body>
+</html>
