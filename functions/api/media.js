@@ -1,5 +1,5 @@
 // npm install စရာမလိုဘဲ esm.sh ကနေ တိုက်ရိုက် လှမ်းယူသုံးပါမယ်
-import { AwsClient } from 'https://esm.sh/aws4fetch@1.0.17';
+import { AwsClient } from 'aws4fetch';
 
 export async function onRequest(context) {
   const requestUrl = new URL(context.request.url);
