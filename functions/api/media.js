@@ -13,31 +13,18 @@ export async function onRequest(context) {
 
   const wasabiUrl = `https://s3.ap-southeast-1.wasabisys.com/lugyi/${fileName}`;
 
-  // ၁။ Wasabi ဆီကနေ ဖိုင်ရဲ့ Header (Size နဲ့ Type) ကို အရင်ယူမယ်
-  const headResponse = await aws.fetch(wasabiUrl, { method: 'HEAD' });
-  const fileSize = headResponse.headers.get('content-length');
-
-  // ၂။ အကယ်၍ APK က File Size စစ်ဖို့ (HEAD request) ပို့လာရင်
-  if (context.request.method === 'HEAD') {
-    return new Response(null, {
-      headers: {
-        'Content-Length': fileSize,
-        'Content-Type': 'video/mp4',
-        'Accept-Ranges': 'bytes'
-      }
-    });
-  }
-
-  // ၃။ တကယ်ဒေါင်းဖို့အတွက် Redirect လုပ်မယ့်အစား 
-  // APK က Download Manager နဲ့သုံးလို့ရအောင် Link အသစ်ကို ချက်ချင်းပို့ပေးလိုက်မယ်
-  const signedRequest = await aws.sign(wasabiUrl, {
-    method: 'GET',
-    awsService: 's3',
-    signQuery: true,
-    expiresIn: 604800
+  // Wasabi ဆီကနေ ဖိုင်ကိုဆွဲယူပြီး Proxy လုပ်မယ်
+  const response = await aws.fetch(wasabiUrl, {
+    headers: context.request.headers // APK ရဲ့ Range request တွေကိုပါ Wasabi ဆီပို့ပေးမယ်
   });
 
-  // အရေးကြီးချက် - APK က Size မြင်ဖို့အတွက် Proxy လုပ်ပေးရမယ်
-  // Redirect မလုပ်ဘဲ Header တွေနဲ့တကွ ပြန်ပို့ပေးလိုက်မယ်
-  return Response.redirect(signedRequest.url, 302);
+  // Cloudflare ကနေ headers တွေကို ပြန်ပြင်ပို့မယ် (Size နဲ့ Download အတွက်)
+  const newHeaders = new Headers(response.headers);
+  newHeaders.set("Content-Disposition", `attachment; filename="${fileName}"`);
+  newHeaders.set("Access-Control-Allow-Origin", "*");
+
+  return new Response(response.body, {
+    status: response.status,
+    headers: newHeaders
+  });
 }
