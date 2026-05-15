@@ -13,7 +13,7 @@ export async function onRequest(context) {
 
   const wasabiUrl = `https://s3.ap-southeast-1.wasabisys.com/lugyi/${fileName}`;
 
-  // ၁။ Wasabi ဆီကနေ အချိန်ပိုင်း Link (Pre-signed URL) ကို အရင်ယူမယ်
+  // ၁။ Wasabi ဆီကနေ အချိန်ပိုင်း Link (Pre-signed URL) ထုတ်မယ်
   const signedRequest = await aws.sign(wasabiUrl, {
     method: 'GET',
     awsService: 's3',
@@ -21,22 +21,20 @@ export async function onRequest(context) {
     expiresIn: 3600
   });
 
-  // ၂။ အဲ့ဒီ Link ကို Cloudflare ရဲ့ fetch နဲ့ ပြန်ခေါ်ပြီး User ကို stream ပေးမယ်
-  // ဒီနေရာမှာ Cloudflare က Wasabi ဆီက Data ကို ဆွဲပြီး User ကို ပြန်ပို့ပေးသွားမှာ
+  // ၂။ APK က ပို့လိုက်တဲ့ Headers (Range: bytes=...) ကို Wasabi ဆီ ပို့ပေးရမယ်
+  // ဒါမှသာ သူက ရစ်ကြည့်တဲ့ အပိုင်းကို သီးသန့်ပေးမှာပါ
   const response = await fetch(signedRequest.url, {
     method: context.request.method,
-    headers: context.request.headers
+    headers: context.request.headers // ဒီနေရာမှာ Range header ပါသွားပြီ
   });
 
-  // ၃။ Proxy ပြန်လုပ်ပေးမယ် (VPN မလိုတော့ဘူး)
+  // ၃။ Headers အကုန် ပြန် Copy ကူးပေးမယ်
+  const newHeaders = new Headers(response.headers);
+  newHeaders.set("Access-Control-Allow-Origin", "*");
+  
+  // အရေးကြီး: Range request ဖြစ်ရင် Status က 206 ဖြစ်ရမယ်
   return new Response(response.body, {
     status: response.status,
-    headers: {
-      "Content-Type": "video/mp4",
-      "Content-Length": response.headers.get("Content-Length"),
-      "Content-Disposition": `attachment; filename="${fileName}"`,
-      "Accept-Ranges": "bytes",
-      "Access-Control-Allow-Origin": "*"
-    }
+    headers: newHeaders
   });
 }
