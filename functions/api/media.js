@@ -4,10 +4,9 @@ const CONFIG = {
   region: 'ap-northeast-2',
   bucket: 'osaa',
   endpoint: 's3.ap-northeast-2.wasabisys.com',
-  signedUrlExpiry: 604800, // 7 days
+  signedUrlExpiry: 604800, // 7 days (max for S3 signed URLs)
 };
 
-// Path traversal တားဆီးရန် filename sanitize
 function sanitizeFileName(name) {
   if (!name || typeof name !== 'string') return null;
   if (name.includes('..') || name.includes('\\') || name.startsWith('/')) return null;
@@ -27,13 +26,13 @@ export async function onRequest(context) {
       return new Response('Invalid or missing file parameter', { status: 400 });
     }
 
-    // ၂။ Environment variables စစ်ဆေးခြင်း
+    // ၂။ Env vars စစ်ဆေး
     if (!env.WASABI_ACCESS_KEY || !env.WASABI_SECRET_KEY) {
       console.error('Wasabi credentials မထည့်ထားပါ');
       return new Response('Server configuration error', { status: 500 });
     }
 
-    // ၃။ AWS client ဖန်တီးခြင်း
+    // ၃။ AWS client
     const aws = new AwsClient({
       accessKeyId: env.WASABI_ACCESS_KEY,
       secretAccessKey: env.WASABI_SECRET_KEY,
@@ -41,11 +40,11 @@ export async function onRequest(context) {
       region: CONFIG.region,
     });
 
-    // ၄။ Filename ကို URL encode (slash တွေတော့ ထားခဲ့)
+    // ၄။ Filename ကို encode (slash ထားခဲ့)
     const encodedFileName = encodeURIComponent(fileName).replace(/%2F/g, '/');
     const wasabiUrl = `https://${CONFIG.endpoint}/${CONFIG.bucket}/${encodedFileName}`;
 
-    // ၅။ HEAD request → file size/metadata ပြန်ပေး (Proxy mode)
+    // ၅။ HEAD → file size/metadata proxy
     if (request.method === 'HEAD') {
       const headResponse = await aws.fetch(wasabiUrl, { method: 'HEAD' });
 
@@ -56,7 +55,6 @@ export async function onRequest(context) {
       }
 
       const responseHeaders = new Headers();
-      // Wasabi ဆီက ပြန်လာတဲ့ headers တွေကို forward
       const forwardHeaders = ['content-length', 'content-type', 'etag', 'last-modified'];
       for (const h of forwardHeaders) {
         const v = headResponse.headers.get(h);
@@ -65,26 +63,23 @@ export async function onRequest(context) {
       responseHeaders.set('Accept-Ranges', 'bytes');
       responseHeaders.set('Cache-Control', 'public, max-age=3600');
 
-      return new Response(null, {
-        status: 200,
-        headers: responseHeaders,
-      });
+      return new Response(null, { status: 200, headers: responseHeaders });
     }
 
-    // ၆။ GET request → Signed URL ထုတ်ပြီး redirect (Stream/Download mode)
+    // ၆။ GET → Signed URL redirect
     if (request.method === 'GET') {
-      const signedRequest = await aws.sign(wasabiUrl, {
+      // X-Amz-Expires ကို query parameter အဖြစ် URL ထဲ တိုက်ရိုက်ထည့်ရမယ်
+      const urlToSign = new URL(wasabiUrl);
+      urlToSign.searchParams.set('X-Amz-Expires', CONFIG.signedUrlExpiry.toString());
+
+      const signedRequest = await aws.sign(urlToSign.toString(), {
         method: 'GET',
         aws: { signQuery: true },
-        headers: {
-          'X-Amz-Expires': CONFIG.signedUrlExpiry.toString(),
-        },
       });
 
       return Response.redirect(signedRequest.url, 302);
     }
 
-    // ၇။ တခြား method တွေ မလက်ခံ
     return new Response('Method not allowed', {
       status: 405,
       headers: { Allow: 'GET, HEAD' },
