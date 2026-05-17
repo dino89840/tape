@@ -1,9 +1,9 @@
 import { AwsClient } from 'aws4fetch';
 
 const CONFIG = {
-  region: 'ap-northeast-2',
-  bucket: 'osaa',
-  endpoint: 's3.ap-northeast-2.wasabisys.com',
+  region: 'ap-northeast-1',
+  bucket: 'namisi',
+  endpoint: 's3.ap-northeast-1.wasabisys.com',
   signedUrlExpiry: 604800, // 7 days (max for S3 signed URLs)
 };
 
